@@ -369,9 +369,13 @@ pub enum CreateWithPersistError<E> {
 impl<E: fmt::Display> fmt::Display for CreateWithPersistError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Persist(err) => write!(f, "Persistence error: {}", err),
+            Self::Persist(err) => write!(f, "{}", err),
             Self::DataAlreadyExists(changeset) => {
-                write!(f, "{}", changeset_info(changeset))
+                write!(
+                    f,
+                    "Cannot create wallet in a persister which already contains data: {}",
+                    changeset_info(changeset)
+                )
             }
             Self::Descriptor(err) => {
                 write!(f, "{err}")
@@ -380,27 +384,29 @@ impl<E: fmt::Display> fmt::Display for CreateWithPersistError<E> {
     }
 }
 
-/// Helper function to write basic fingerprinting information about a changeset
+#[cfg(feature = "std")]
+impl<E: fmt::Debug + fmt::Display> std::error::Error for CreateWithPersistError<E> {}
+
+/// Helper to display basic info about a [`ChangeSet`].
 fn changeset_info(changeset: &ChangeSet) -> String {
     let network = match &changeset.network {
         Some(network) => network.to_string(),
         None => "None".to_string(),
     };
-    let external_checksum = match &changeset.descriptor {
-        Some(descriptor) => calc_checksum(&descriptor.to_string()).unwrap(),
-        None => "[no external descriptor in the changeset]".to_string(),
-    };
-    let internal_checksum = match &changeset.change_descriptor {
-        Some(descriptor) => calc_checksum(&descriptor.to_string()).unwrap(),
-        None => "[no internal descriptor in the changeset]".to_string(),
-    };
-
-    format!(
-        "Cannot create wallet in a persister which already contains wallet data: \
-        Network: {}, External Descriptor Checksum: {}, Internal Descriptor Checksum: {}",
-        network, external_checksum, internal_checksum
-    )
+    let mut checksum = String::new();
+    if let Some(desc) = &changeset.descriptor {
+        if let Ok(ck) = calc_checksum(&desc.to_string()) {
+            checksum += ck.as_str();
+        }
+    }
+    if let Some(desc) = &changeset.change_descriptor {
+        if let Ok(ck) = calc_checksum(&desc.to_string()) {
+            checksum += ck.as_str();
+        }
+    }
+    // Avoid returning an empty checksum
+    if checksum.is_empty() {
+        checksum = "None".to_string();
+    }
+    format!("Network: {}, descriptor checksum: {}", network, checksum)
 }
-
-#[cfg(feature = "std")]
-impl<E: fmt::Debug + fmt::Display> std::error::Error for CreateWithPersistError<E> {}
