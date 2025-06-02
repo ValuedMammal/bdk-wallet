@@ -1,6 +1,9 @@
+use alloc::collections::BTreeMap;
+
 use bdk_chain::{
     indexed_tx_graph, keychain_txout, local_chain, tx_graph, ConfirmationBlockTime, Merge,
 };
+use bitcoin::{OutPoint, Txid};
 use miniscript::{Descriptor, DescriptorPublicKey};
 use serde::{Deserialize, Serialize};
 
@@ -114,6 +117,8 @@ pub struct ChangeSet {
     pub tx_graph: tx_graph::ChangeSet<ConfirmationBlockTime>,
     /// Changes to [`KeychainTxOutIndex`](keychain_txout::KeychainTxOutIndex).
     pub indexer: keychain_txout::ChangeSet,
+    /// Changes to locked utxos.
+    pub utxo_info: BTreeMap<OutPoint, bool>,
 }
 
 impl Merge for ChangeSet {
@@ -142,6 +147,9 @@ impl Merge for ChangeSet {
             self.network = other.network;
         }
 
+        // To merge utxo_info we just extend the existing collection
+        self.utxo_info.extend(other.utxo_info);
+
         Merge::merge(&mut self.local_chain, other.local_chain);
         Merge::merge(&mut self.tx_graph, other.tx_graph);
         Merge::merge(&mut self.indexer, other.indexer);
@@ -154,6 +162,7 @@ impl Merge for ChangeSet {
             && self.local_chain.is_empty()
             && self.tx_graph.is_empty()
             && self.indexer.is_empty()
+            && self.utxo_info.is_empty()
     }
 }
 
@@ -163,6 +172,8 @@ impl ChangeSet {
     pub const WALLET_SCHEMA_NAME: &'static str = "bdk_wallet";
     /// Name of table to store wallet descriptors and network.
     pub const WALLET_TABLE_NAME: &'static str = "bdk_wallet";
+    /// Name of table to store wallet utxo locks.
+    pub const WALLET_LOCK_UNSPENT_TABLE_NAME: &'static str = "bdk_wallet_lock_unspent";
 
     /// Get v0 sqlite [ChangeSet] schema
     pub fn schema_v0() -> alloc::string::String {
@@ -177,12 +188,25 @@ impl ChangeSet {
         )
     }
 
+    /// Get v1 sqlite [ChangeSet] schema
+    pub fn schema_v1() -> alloc::string::String {
+        format!(
+            "CREATE TABLE {} ( \
+                txid TEXT NOT NULL, \
+                vout INTEGER NOT NULL, \
+                is_locked INTEGER, \
+                PRIMARY KEY(txid, vout) \
+                ) STRICT;",
+            Self::WALLET_LOCK_UNSPENT_TABLE_NAME,
+        )
+    }
+
     /// Initialize sqlite tables for wallet tables.
     pub fn init_sqlite_tables(db_tx: &chain::rusqlite::Transaction) -> chain::rusqlite::Result<()> {
         crate::rusqlite_impl::migrate_schema(
             db_tx,
             Self::WALLET_SCHEMA_NAME,
-            &[&Self::schema_v0()],
+            &[&Self::schema_v0(), &Self::schema_v1()],
         )?;
 
         bdk_chain::local_chain::ChangeSet::init_sqlite_tables(db_tx)?;
@@ -218,6 +242,26 @@ impl ChangeSet {
             changeset.descriptor = desc.map(Impl::into_inner);
             changeset.change_descriptor = change_desc.map(Impl::into_inner);
             changeset.network = network.map(Impl::into_inner);
+        }
+
+        // Load locked utxos
+        let mut stmt = db_tx.prepare(&format!(
+            "SELECT txid, vout, is_locked FROM {}",
+            Self::WALLET_LOCK_UNSPENT_TABLE_NAME,
+        ))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, Impl<Txid>>("txid")?,
+                row.get::<_, u32>("vout")?,
+                row.get::<_, bool>("is_locked")?,
+            ))
+        })?;
+
+        for row in rows {
+            let (Impl(txid), vout, is_locked) = row?;
+            changeset
+                .utxo_info
+                .insert(OutPoint::new(txid, vout), is_locked);
         }
 
         changeset.local_chain = local_chain::ChangeSet::from_sqlite(db_tx)?;
@@ -265,6 +309,20 @@ impl ChangeSet {
             network_statement.execute(named_params! {
                 ":id": 0,
                 ":network": Impl(network),
+            })?;
+        }
+
+        // Persist locked utxos
+        let mut stmt = db_tx.prepare_cached(&format!(
+            "INSERT INTO {}(txid, vout, is_locked) VALUES(:txid, :vout, :is_locked) ON CONFLICT DO UPDATE SET is_locked = :is_locked",
+            Self::WALLET_LOCK_UNSPENT_TABLE_NAME,
+        ))?;
+        for (&op, &is_locked) in &self.utxo_info {
+            let OutPoint { txid, vout } = op;
+            stmt.execute(named_params! {
+                ":txid": Impl(txid),
+                ":vout": vout,
+                ":is_locked": is_locked,
             })?;
         }
 
