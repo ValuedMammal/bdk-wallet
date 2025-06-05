@@ -41,6 +41,7 @@ use core::fmt;
 
 use alloc::sync::Arc;
 
+use bdk_chain::CanonicalizationParams;
 use bitcoin::psbt::{self, Psbt};
 use bitcoin::script::PushBytes;
 use bitcoin::{
@@ -141,6 +142,7 @@ pub(crate) struct TxParams {
     pub(crate) bumping_fee: Option<PreviousFee>,
     pub(crate) current_height: Option<absolute::LockTime>,
     pub(crate) allow_dust: bool,
+    pub(crate) canonical_params: CanonicalizationParams,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -438,6 +440,22 @@ impl<'a, Cs> TxBuilder<'a, Cs> {
     /// [`add_utxo`]: Self::add_utxo
     pub fn manually_selected_only(&mut self) -> &mut Self {
         self.params.manually_selected_only = true;
+        self
+    }
+
+    /// Set the canonicalization parameters used to find UTXOs that may be selected
+    /// as inputs.
+    pub fn canonical_params(&mut self, params: CanonicalizationParams) -> &mut Self {
+        self.params.canonical_params = params;
+        self
+    }
+
+    /// Assume the wallet's tx queue is canonical for the purpose of coin selection.
+    pub fn assume_tx_queue(&mut self) -> &mut Self {
+        let params = CanonicalizationParams {
+            assume_canonical: self.wallet.tx_queue.clone(),
+        };
+        self.params.canonical_params = params;
         self
     }
 

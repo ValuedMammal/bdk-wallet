@@ -114,6 +114,10 @@ pub struct ChangeSet {
     pub tx_graph: tx_graph::ChangeSet<ConfirmationBlockTime>,
     /// Changes to [`KeychainTxOutIndex`](keychain_txout::KeychainTxOutIndex).
     pub indexer: keychain_txout::ChangeSet,
+    /// changes to tx_queue
+    // txid -> add/remove (1 = add)
+    // TODO: Consider modeling the add/remove flag with an enum.
+    pub tx_queue: alloc::collections::BTreeMap<bitcoin::Txid, u8>,
 }
 
 impl Merge for ChangeSet {
@@ -142,6 +146,9 @@ impl Merge for ChangeSet {
             self.network = other.network;
         }
 
+        // When merging the tx_queue just extend the existing collection.
+        self.tx_queue = other.tx_queue;
+
         Merge::merge(&mut self.local_chain, other.local_chain);
         Merge::merge(&mut self.tx_graph, other.tx_graph);
         Merge::merge(&mut self.indexer, other.indexer);
@@ -154,6 +161,7 @@ impl Merge for ChangeSet {
             && self.local_chain.is_empty()
             && self.tx_graph.is_empty()
             && self.indexer.is_empty()
+            && self.tx_queue.is_empty()
     }
 }
 
@@ -163,6 +171,8 @@ impl ChangeSet {
     pub const WALLET_SCHEMA_NAME: &'static str = "bdk_wallet";
     /// Name of table to store wallet descriptors and network.
     pub const WALLET_TABLE_NAME: &'static str = "bdk_wallet";
+    /// Name of table to store wallet tx queue.
+    pub const WALLET_TX_QUEUE_TABLE_NAME: &'static str = "bdk_wallet_tx_queue";
 
     /// Get v0 sqlite [ChangeSet] schema
     pub fn schema_v0() -> alloc::string::String {
@@ -177,12 +187,22 @@ impl ChangeSet {
         )
     }
 
+    /// Schema v1 adds a table for tx queue.
+    pub fn schema_v1() -> alloc::string::String {
+        format!(
+            "CREATE TABLE {} ( \
+                txid TEXT PRIMARY KEY NOT NULL \
+                ) STRICT;",
+            Self::WALLET_TX_QUEUE_TABLE_NAME,
+        )
+    }
+
     /// Initialize sqlite tables for wallet tables.
     pub fn init_sqlite_tables(db_tx: &chain::rusqlite::Transaction) -> chain::rusqlite::Result<()> {
         crate::rusqlite_impl::migrate_schema(
             db_tx,
             Self::WALLET_SCHEMA_NAME,
-            &[&Self::schema_v0()],
+            &[&Self::schema_v0(), &Self::schema_v1()],
         )?;
 
         bdk_chain::local_chain::ChangeSet::init_sqlite_tables(db_tx)?;
@@ -218,6 +238,17 @@ impl ChangeSet {
             changeset.descriptor = desc.map(Impl::into_inner);
             changeset.change_descriptor = change_desc.map(Impl::into_inner);
             changeset.network = network.map(Impl::into_inner);
+        }
+
+        // Select tx queue
+        let mut stmt = db_tx.prepare(&format!(
+            "SELECT txid FROM {}",
+            Self::WALLET_TX_QUEUE_TABLE_NAME
+        ))?;
+        let rows = stmt.query_map([], |row| Ok(row.get::<_, Impl<bitcoin::Txid>>("txid")?))?;
+        for row in rows {
+            let Impl(txid) = row?;
+            changeset.tx_queue.insert(txid, 0x01);
         }
 
         changeset.local_chain = local_chain::ChangeSet::from_sqlite(db_tx)?;
@@ -266,6 +297,31 @@ impl ChangeSet {
                 ":id": 0,
                 ":network": Impl(network),
             })?;
+        }
+
+        // Persist the tx queue
+        let mut add_stmt = db_tx.prepare(&format!(
+            "INSERT INTO {}(txid) VALUES(:txid)",
+            Self::WALLET_TX_QUEUE_TABLE_NAME,
+        ))?;
+        let mut remove_stmt = db_tx.prepare(&format!(
+            "DELETE FROM {} WHERE txid = :txid",
+            Self::WALLET_TX_QUEUE_TABLE_NAME,
+        ))?;
+        for (&txid, flag) in &self.tx_queue {
+            match flag {
+                0x00 => {
+                    remove_stmt.execute(named_params! {
+                        ":txid": Impl(txid),
+                    })?;
+                }
+                0x01 => {
+                    add_stmt.execute(named_params! {
+                        ":txid": Impl(txid),
+                    })?;
+                }
+                _ => unreachable!("There can only be two cases for `flag`"),
+            }
         }
 
         self.local_chain.persist_to_sqlite(db_tx)?;

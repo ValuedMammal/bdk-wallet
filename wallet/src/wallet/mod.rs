@@ -109,6 +109,8 @@ pub struct Wallet {
     stage: ChangeSet,
     network: Network,
     secp: SecpCtx,
+    // queue of txs to be broadcasted.
+    tx_queue: Vec<Txid>,
 }
 
 /// An update to [`Wallet`].
@@ -449,6 +451,7 @@ impl Wallet {
         let change_descriptor = index.get_descriptor(KeychainKind::Internal).cloned();
         let indexed_graph = IndexedTxGraph::new(index);
         let indexed_graph_changeset = indexed_graph.initial_changeset();
+        let tx_queue = vec![];
 
         let stage = ChangeSet {
             descriptor,
@@ -457,6 +460,7 @@ impl Wallet {
             tx_graph: indexed_graph_changeset.tx_graph,
             indexer: indexed_graph_changeset.indexer,
             network: Some(network),
+            ..Default::default()
         };
 
         Ok(Wallet {
@@ -467,6 +471,7 @@ impl Wallet {
             indexed_graph,
             stage,
             secp,
+            tx_queue,
         })
     }
 
@@ -654,6 +659,10 @@ impl Wallet {
         indexed_graph.apply_changeset(changeset.indexer.into());
         indexed_graph.apply_changeset(changeset.tx_graph.into());
 
+        let mut tx_queue = changeset.tx_queue;
+        tx_queue.retain(|_, b| b == &0x01);
+        let tx_queue: Vec<Txid> = tx_queue.into_keys().collect();
+
         let stage = ChangeSet::default();
 
         Ok(Some(Wallet {
@@ -664,6 +673,7 @@ impl Wallet {
             stage,
             network,
             secp,
+            tx_queue,
         }))
     }
 
@@ -1147,6 +1157,42 @@ impl Wallet {
             .find(|tx| tx.tx_node.txid == txid)
     }
 
+    /// Places the given txid at the back of the queue of txs to broadcast.
+    ///
+    /// Also stages the queued tx to be persisted.
+    pub fn queue_tx(&mut self, txid: Txid) {
+        if self.tx_queue.contains(&txid) {
+            return;
+        }
+        self.tx_queue.push(txid);
+        let changeset = ChangeSet {
+            tx_queue: [(txid, 0x01)].into(),
+            ..Default::default()
+        };
+        self.stage.merge(changeset);
+    }
+
+    /// Get a reference to the tx queue.
+    pub fn tx_queue(&self) -> &Vec<Txid> {
+        &self.tx_queue
+    }
+
+    /// Remove queued tx.
+    pub fn remove_queue_tx(&mut self, txid: Txid) {
+        if !self.tx_queue.contains(&txid) {
+            return;
+        }
+        let to_remove = &txid;
+        // Retain every element other than the txid to remove.
+        self.tx_queue.retain(|txid| txid != to_remove);
+        let changeset = ChangeSet {
+            // 0 in the changeset signals a removal
+            tx_queue: [(txid, 0x00)].into(),
+            ..Default::default()
+        };
+        self.stage.merge(changeset);
+    }
+
     /// Iterate over relevant and canonical transactions in the wallet.
     ///
     /// A transaction is relevant when it spends from or spends to at least one tracked output. A
@@ -1202,6 +1248,19 @@ impl Wallet {
             &self.chain,
             self.chain.tip().block_id(),
             CanonicalizationParams::default(),
+            self.indexed_graph.index.outpoints().iter().cloned(),
+            |&(k, _), _| k == KeychainKind::Internal,
+        )
+    }
+
+    /// Balance assuming that the tx queue is canonical.
+    pub fn balance_assume_tx_queue(&self) -> Balance {
+        self.indexed_graph.graph().balance(
+            &self.chain,
+            self.chain.tip().block_id(),
+            CanonicalizationParams {
+                assume_canonical: self.tx_queue.clone(),
+            },
             self.indexed_graph.index.outpoints().iter().cloned(),
             |&(k, _), _| k == KeychainKind::Internal,
         )
@@ -2107,7 +2166,7 @@ impl Wallet {
                 .filter_chain_unspents(
                     &self.chain,
                     self.chain.tip().block_id(),
-                    CanonicalizationParams::default(),
+                    params.canonical_params.clone(),
                     self.indexed_graph.index.outpoints().iter().cloned(),
                 )
                 // only create LocalOutput if UTxO is mature
