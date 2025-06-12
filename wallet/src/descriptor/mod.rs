@@ -339,11 +339,11 @@ impl<Ctx: miniscript::ScriptContext, Pk: miniscript::MiniscriptKey> CheckMiniscr
 }
 
 /// Trait implemented on [`Descriptor`]s to add a method to extract the spending [`policy`]
-pub trait ExtractPolicy {
+pub(crate) trait ExtractPolicy {
     /// Extract the spending [`policy`]
     fn extract_policy(
         &self,
-        signers: &SignersContainer,
+        _signers: &SignersContainer,
         psbt: BuildSatisfaction,
         secp: &SecpCtx,
     ) -> Result<Option<Policy>, DescriptorError>;

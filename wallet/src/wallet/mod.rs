@@ -47,6 +47,7 @@ pub mod error;
 pub mod export;
 mod params;
 mod persisted;
+#[allow(unused)]
 pub(crate) mod signer;
 pub mod tx_builder;
 pub(crate) mod utils;
@@ -71,17 +72,15 @@ pub use bdk_chain::Balance;
 pub use changeset::ChangeSet;
 pub use params::*;
 pub use persisted::*;
-pub use signer::{SignOptions, SignerError, SignersContainer};
 pub use utils::IsDust;
 pub use utils::TxDetails;
 
 /// A Bitcoin wallet
 ///
 /// The `Wallet` acts as a way of coherently interfacing with output descriptors and related
-/// transactions. Its main components are:
+/// transactions. Its main components are: TODO
 ///
 /// 1. output *descriptors* from which it can derive addresses.
-/// 2. [`signer`]s that can contribute signatures to addresses instantiated from the descriptors.
 ///
 /// The user is responsible for loading and writing wallet changes which are represented as
 /// [`ChangeSet`]s (see [`take_staged`]). Also see individual functions and example for instructions
@@ -90,7 +89,6 @@ pub use utils::TxDetails;
 /// The `Wallet` descriptor (external) and change descriptor (internal) must not derive the same
 /// script pubkeys. See [`KeychainTxOutIndex::insert_descriptor()`] for more details.
 ///
-/// [`signer`]: crate::signer
 /// [`take_staged`]: Wallet::take_staged
 #[derive(Debug)]
 pub struct Wallet {
@@ -1241,7 +1239,7 @@ impl Wallet {
         let external_descriptor = keychains.get(&KeychainKind::External).expect("must exist");
         let internal_descriptor = keychains.get(&KeychainKind::Internal);
 
-        let signers_container = SignersContainer::default();
+        let signers_container = crate::wallet::signer::SignersContainer::default();
 
         let external_policy = external_descriptor
             .extract_policy(&signers_container, BuildSatisfaction::None, &self.secp)?
@@ -1758,7 +1756,7 @@ impl Wallet {
     /// Return the spending policies for the wallet's descriptor
     pub fn policies(&self, keychain: KeychainKind) -> Result<Option<Policy>, DescriptorError> {
         self.public_descriptor(keychain).extract_policy(
-            &SignersContainer::default(),
+            &crate::wallet::signer::SignersContainer::default(),
             BuildSatisfaction::None,
             &self.secp,
         )
@@ -1783,8 +1781,6 @@ impl Wallet {
     /// for further information.
     ///
     /// Returns `true` if the PSBT could be finalized, and `false` otherwise.
-    ///
-    /// The [`SignOptions`] can be used to tweak the behavior of the finalizer.
     pub fn finalize_psbt(&self, psbt: &mut Psbt) -> Result<bool, IndexOutOfBoundsError> {
         let tx = &psbt.unsigned_tx;
 

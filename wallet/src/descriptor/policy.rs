@@ -1090,7 +1090,7 @@ impl<'a> BuildSatisfaction<'a> {
 impl ExtractPolicy for Descriptor<DescriptorPublicKey> {
     fn extract_policy(
         &self,
-        signers: &SignersContainer,
+        _signers: &SignersContainer,
         build_sat: BuildSatisfaction,
         secp: &SecpCtx,
     ) -> Result<Option<Policy>, Error> {
@@ -1106,6 +1106,8 @@ impl ExtractPolicy for Descriptor<DescriptorPublicKey> {
                 &threshold, signers, build_sat, true, secp,
             )?)
         }
+
+        let signers = &SignersContainer::default();
 
         match self {
             Descriptor::Pkh(pk) => Ok(Some(miniscript::Legacy::make_signature(
