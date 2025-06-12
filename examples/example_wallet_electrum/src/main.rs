@@ -1,3 +1,4 @@
+#![allow(unused)]
 use bdk_wallet::file_store::Store;
 use bdk_wallet::Wallet;
 use std::io::Write;
@@ -7,7 +8,7 @@ use bdk_electrum::BdkElectrumClient;
 use bdk_wallet::bitcoin::Amount;
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::chain::collections::HashSet;
-use bdk_wallet::{KeychainKind, SignOptions};
+use bdk_wallet::KeychainKind;
 
 const DB_MAGIC: &str = "bdk_wallet_electrum_example";
 const SEND_AMOUNT: Amount = Amount::from_sat(5000);
@@ -85,12 +86,6 @@ fn main() -> Result<(), anyhow::Error> {
     tx_builder.add_recipient(address.script_pubkey(), SEND_AMOUNT);
 
     let mut psbt = tx_builder.finish()?;
-    let finalized = wallet.sign(&mut psbt, SignOptions::default())?;
-    assert!(finalized);
-
-    let tx = psbt.extract_tx()?;
-    client.transaction_broadcast(&tx)?;
-    println!("Tx broadcasted! Txid: {}", tx.compute_txid());
 
     Ok(())
 }

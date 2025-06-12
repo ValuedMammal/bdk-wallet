@@ -1,10 +1,11 @@
+#![allow(unused)]
 use std::{collections::BTreeSet, io::Write};
 
 use bdk_esplora::{esplora_client, EsploraExt};
 use bdk_wallet::{
     bitcoin::{Amount, Network},
     file_store::Store,
-    KeychainKind, SignOptions, Wallet,
+    KeychainKind, Wallet,
 };
 
 const DB_MAGIC: &str = "bdk_wallet_esplora_example";
@@ -79,13 +80,7 @@ fn main() -> Result<(), anyhow::Error> {
     let mut tx_builder = wallet.build_tx();
     tx_builder.add_recipient(address.script_pubkey(), SEND_AMOUNT);
 
-    let mut psbt = tx_builder.finish()?;
-    let finalized = wallet.sign(&mut psbt, SignOptions::default())?;
-    assert!(finalized);
-
-    let tx = psbt.extract_tx()?;
-    client.broadcast(&tx)?;
-    println!("Tx broadcasted! Txid: {}", tx.compute_txid());
+    let psbt = tx_builder.finish()?;
 
     Ok(())
 }

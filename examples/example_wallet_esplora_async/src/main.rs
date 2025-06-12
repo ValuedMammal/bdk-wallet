@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{collections::BTreeSet, io::Write};
 
 use anyhow::Ok;
@@ -5,7 +6,7 @@ use bdk_esplora::{esplora_client, EsploraAsyncExt};
 use bdk_wallet::{
     bitcoin::{Amount, Network},
     rusqlite::Connection,
-    KeychainKind, SignOptions, Wallet,
+    KeychainKind, Wallet,
 };
 
 const SEND_AMOUNT: Amount = Amount::from_sat(5000);
@@ -79,13 +80,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut tx_builder = wallet.build_tx();
     tx_builder.add_recipient(address.script_pubkey(), SEND_AMOUNT);
 
-    let mut psbt = tx_builder.finish()?;
-    let finalized = wallet.sign(&mut psbt, SignOptions::default())?;
-    assert!(finalized);
-
-    let tx = psbt.extract_tx()?;
-    client.broadcast(&tx).await?;
-    println!("Tx broadcasted! Txid: {}", tx.compute_txid());
+    let psbt = tx_builder.finish()?;
 
     Ok(())
 }

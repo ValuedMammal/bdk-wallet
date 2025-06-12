@@ -14,7 +14,7 @@ use std::error::Error;
 
 use bdk_wallet::bitcoin::Network;
 use bdk_wallet::descriptor::{policy::BuildSatisfaction, ExtractPolicy, IntoWalletDescriptor};
-use bdk_wallet::signer::SignersContainer;
+use bdk_wallet::SignersContainer;
 
 /// This example describes the use of the BDK's [`bdk_wallet::descriptor::policy`] module.
 ///
