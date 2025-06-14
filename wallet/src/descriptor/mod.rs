@@ -46,7 +46,6 @@ pub use self::error::Error as DescriptorError;
 pub use self::policy::Policy;
 use self::template::DescriptorTemplateOut;
 use crate::keys::{IntoDescriptorKey, KeyError};
-use crate::wallet::signer::SignersContainer;
 use crate::wallet::utils::SecpCtx;
 
 /// Alias for a [`Descriptor`] that can contain extended keys using [`DescriptorPublicKey`]
@@ -339,11 +338,10 @@ impl<Ctx: miniscript::ScriptContext, Pk: miniscript::MiniscriptKey> CheckMiniscr
 }
 
 /// Trait implemented on [`Descriptor`]s to add a method to extract the spending [`policy`]
-pub(crate) trait ExtractPolicy {
+pub trait ExtractPolicy {
     /// Extract the spending [`policy`]
     fn extract_policy(
         &self,
-        _signers: &SignersContainer,
         psbt: BuildSatisfaction,
         secp: &SecpCtx,
     ) -> Result<Option<Policy>, DescriptorError>;

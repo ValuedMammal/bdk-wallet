@@ -1239,16 +1239,14 @@ impl Wallet {
         let external_descriptor = keychains.get(&KeychainKind::External).expect("must exist");
         let internal_descriptor = keychains.get(&KeychainKind::Internal);
 
-        let signers_container = crate::wallet::signer::SignersContainer::default();
-
         let external_policy = external_descriptor
-            .extract_policy(&signers_container, BuildSatisfaction::None, &self.secp)?
+            .extract_policy(BuildSatisfaction::None, &self.secp)?
             .unwrap();
 
         let internal_policy = internal_descriptor
             .map(|desc| {
                 Ok::<_, CreateTxError>(
-                    desc.extract_policy(&signers_container, BuildSatisfaction::None, &self.secp)?
+                    desc.extract_policy(BuildSatisfaction::None, &self.secp)?
                         .unwrap(),
                 )
             })
@@ -1755,11 +1753,8 @@ impl Wallet {
 
     /// Return the spending policies for the wallet's descriptor
     pub fn policies(&self, keychain: KeychainKind) -> Result<Option<Policy>, DescriptorError> {
-        self.public_descriptor(keychain).extract_policy(
-            &crate::wallet::signer::SignersContainer::default(),
-            BuildSatisfaction::None,
-            &self.secp,
-        )
+        self.public_descriptor(keychain)
+            .extract_policy(BuildSatisfaction::None, &self.secp)
     }
 
     /// Returns the descriptor used to create addresses for a particular `keychain`.
