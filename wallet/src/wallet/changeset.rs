@@ -177,7 +177,7 @@ impl ChangeSet {
     /// Name of table to store wallet descriptors and network.
     pub const WALLET_TABLE_NAME: &'static str = "bdk_wallet";
     /// Name of table to store wallet locked outpoints.
-    pub const WALLET_UTXO_LOCK_TABLE_NAME: &'static str = "bdk_wallet_locked_outpoints";
+    pub const WALLET_OUTPOINT_LOCK_TABLE_NAME: &'static str = "bdk_wallet_locked_outpoints";
 
     /// Get v0 sqlite [ChangeSet] schema
     pub fn schema_v0() -> alloc::string::String {
@@ -202,7 +202,7 @@ impl ChangeSet {
                 expiration_height INTEGER, \
                 PRIMARY KEY(txid, vout) \
                 ) STRICT;",
-            Self::WALLET_UTXO_LOCK_TABLE_NAME,
+            Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
         )
     }
 
@@ -252,7 +252,7 @@ impl ChangeSet {
         // Select locked outpoints.
         let mut stmt = db_tx.prepare(&format!(
             "SELECT txid, vout, is_locked, expiration_height FROM {}",
-            Self::WALLET_UTXO_LOCK_TABLE_NAME,
+            Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
         ))?;
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -325,7 +325,7 @@ impl ChangeSet {
         // Insert locked outpoints.
         let mut stmt = db_tx.prepare_cached(&format!(
             "INSERT INTO {}(txid, vout, is_locked, expiration_height) VALUES(:txid, :vout, :is_locked, :expiration_height) ON CONFLICT DO UPDATE SET is_locked=:is_locked, expiration_height=:expiration_height",
-            Self::WALLET_UTXO_LOCK_TABLE_NAME,
+            Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
         ))?;
         for (&outpoint, utxo_lock) in &self.locked_outpoints {
             let OutPoint { txid, vout } = outpoint;
