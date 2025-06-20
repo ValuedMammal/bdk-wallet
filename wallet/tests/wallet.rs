@@ -142,9 +142,10 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
         assert_eq!(
             changeset
                 .locked_outpoints
+                .expiration_heights
                 .get(&outpoint)
-                .unwrap()
-                .expiration_height,
+                .cloned()
+                .unwrap(),
             Some(expiry)
         );
 
@@ -154,9 +155,10 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
         assert_eq!(
             changeset
                 .locked_outpoints
+                .expiration_heights
                 .get(&outpoint)
-                .unwrap()
-                .expiration_height,
+                .cloned()
+                .unwrap(),
             Some(expiry)
         );
         wallet.persist(&mut conn)?;

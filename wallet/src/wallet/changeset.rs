@@ -1,5 +1,3 @@
-use alloc::collections::BTreeMap;
-
 use bdk_chain::{
     indexed_tx_graph, keychain_txout, local_chain, tx_graph, ConfirmationBlockTime, Merge,
 };
@@ -10,7 +8,7 @@ use serde::{Deserialize, Serialize};
 type IndexedTxGraphChangeSet =
     indexed_tx_graph::ChangeSet<ConfirmationBlockTime, keychain_txout::ChangeSet>;
 
-use crate::UtxoLock;
+use crate::locked_outpoints;
 
 /// A change set for [`Wallet`]
 ///
@@ -120,7 +118,7 @@ pub struct ChangeSet {
     /// Changes to [`KeychainTxOutIndex`](keychain_txout::KeychainTxOutIndex).
     pub indexer: keychain_txout::ChangeSet,
     /// Changes to locked outpoints.
-    pub locked_outpoints: BTreeMap<OutPoint, UtxoLock>,
+    pub locked_outpoints: locked_outpoints::ChangeSet,
 }
 
 impl Merge for ChangeSet {
@@ -149,10 +147,8 @@ impl Merge for ChangeSet {
             self.network = other.network;
         }
 
-        // To merge `locked_outpoints` we extend the existing collection. If there's
-        // an existing entry for a given outpoint, it is overwritten by the
-        // new utxo lock.
-        self.locked_outpoints.extend(other.locked_outpoints);
+        // merge locked outpoints
+        self.locked_outpoints.merge(other.locked_outpoints);
 
         Merge::merge(&mut self.local_chain, other.local_chain);
         Merge::merge(&mut self.tx_graph, other.tx_graph);
@@ -262,16 +258,16 @@ impl ChangeSet {
                 row.get::<_, Option<u32>>("expiration_height")?,
             ))
         })?;
+        let locked_outpoints = &mut changeset.locked_outpoints;
         for row in rows {
             let (Impl(txid), vout, is_locked, expiration_height) = row?;
-            let utxo_lock = UtxoLock {
-                outpoint: OutPoint::new(txid, vout),
-                is_locked,
-                expiration_height,
-            };
-            changeset
+            let outpoint = OutPoint::new(txid, vout);
+            locked_outpoints
                 .locked_outpoints
-                .insert(utxo_lock.outpoint, utxo_lock);
+                .insert(outpoint, is_locked);
+            locked_outpoints
+                .expiration_heights
+                .insert(outpoint, expiration_height);
         }
 
         changeset.local_chain = local_chain::ChangeSet::from_sqlite(db_tx)?;
@@ -324,16 +320,30 @@ impl ChangeSet {
 
         // Insert locked outpoints.
         let mut stmt = db_tx.prepare_cached(&format!(
-            "INSERT INTO {}(txid, vout, is_locked, expiration_height) VALUES(:txid, :vout, :is_locked, :expiration_height) ON CONFLICT DO UPDATE SET is_locked=:is_locked, expiration_height=:expiration_height",
+            "INSERT INTO {}(txid, vout, is_locked) VALUES(:txid, :vout, :is_locked) ON CONFLICT DO UPDATE SET is_locked=:is_locked",
             Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
         ))?;
-        for (&outpoint, utxo_lock) in &self.locked_outpoints {
+        let locked_outpoints = &self.locked_outpoints.locked_outpoints;
+        for (&outpoint, is_locked) in locked_outpoints.iter() {
             let OutPoint { txid, vout } = outpoint;
             stmt.execute(named_params! {
                 ":txid": Impl(txid),
                 ":vout": vout,
-                ":is_locked": utxo_lock.is_locked,
-                ":expiration_height": utxo_lock.expiration_height,
+                ":is_locked": is_locked,
+            })?;
+        }
+        // Insert locked outpoints expiration heights.
+        let mut stmt = db_tx.prepare_cached(&format!(
+            "INSERT INTO {}(txid, vout, expiration_height) VALUES(:txid, :vout, :expiration_height) ON CONFLICT DO UPDATE SET expiration_height=:expiration_height",
+            Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
+        ))?;
+        let expiration_heights = &self.locked_outpoints.expiration_heights;
+        for (&outpoint, expiration_height) in expiration_heights.iter() {
+            let OutPoint { txid, vout } = outpoint;
+            stmt.execute(named_params! {
+                ":txid": Impl(txid),
+                ":vout": vout,
+                ":expiration_height": expiration_height,
             })?;
         }
 
