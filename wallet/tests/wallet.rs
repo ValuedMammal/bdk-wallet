@@ -64,8 +64,10 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
         .create_wallet(&mut conn)?;
 
     // Receive coins.
+    let mut outpoints = vec![];
     for i in 0..3 {
-        let _ = receive_output(&mut wallet, Amount::from_sat(10_000), ReceiveTo::Mempool(i));
+        let op = receive_output(&mut wallet, Amount::from_sat(10_000), ReceiveTo::Mempool(i));
+        outpoints.push(op);
     }
 
     // Test: lock outpoints
@@ -94,7 +96,8 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
                 "Expect recover lock value"
             );
         }
-        assert!(wallet.list_locked_outpoints().all(|u| u.is_locked));
+        let locked_unspent = wallet.list_locked_unspent().collect::<Vec<_>>();
+        assert_eq!(locked_unspent, outpoints);
 
         // Test: Locked outpoints are excluded from coin selection
         let addr = wallet.next_unused_address(KeychainKind::External).address;
@@ -127,7 +130,8 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
                 "Expect outpoint is not locked"
             );
         }
-        assert!(!wallet.list_locked_outpoints().any(|u| u.is_locked));
+        assert!(!wallet.locked_outpoints().values().any(|u| u.is_locked));
+        assert!(wallet.list_locked_unspent().next().is_none());
         wallet.persist(&mut conn)?;
 
         // Test: Update lock expiry

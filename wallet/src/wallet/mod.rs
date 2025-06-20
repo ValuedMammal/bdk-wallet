@@ -2385,9 +2385,16 @@ impl Wallet {
         &self.chain
     }
 
-    /// List locked outpoints.
-    pub fn list_locked_outpoints(&self) -> impl Iterator<Item = UtxoLock> + '_ {
-        self.locked_outpoints.values().copied()
+    /// Get a reference to the locked outpoints.
+    pub fn locked_outpoints(&self) -> &BTreeMap<OutPoint, UtxoLock> {
+        &self.locked_outpoints
+    }
+
+    /// List unspent outpoints that are currently locked.
+    pub fn list_locked_unspent(&self) -> impl Iterator<Item = OutPoint> + '_ {
+        self.list_unspent()
+            .filter(|output| self.is_outpoint_locked(output.outpoint))
+            .map(|output| output.outpoint)
     }
 
     /// Whether the `outpoint` is currently locked. See [`Wallet::lock_outpoint`] for more.
