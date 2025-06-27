@@ -660,21 +660,19 @@ impl Wallet {
         indexed_graph.apply_changeset(changeset.tx_graph.into());
 
         // Apply locked outpoints
-        let mut locked_outpoints = BTreeMap::new();
-        let locked_outpoints::ChangeSet {
-            locked_outpoints: locked_utxos,
-            expiration_heights,
-        } = changeset.locked_outpoints;
-        for (outpoint, is_locked) in locked_utxos {
-            locked_outpoints.insert(
-                outpoint,
-                UtxoLock {
+        let locked_outpoints = changeset.locked_outpoints.locked_outpoints;
+        let locked_outpoints = locked_outpoints
+            .into_iter()
+            .map(|(outpoint, is_locked)| {
+                (
                     outpoint,
-                    is_locked,
-                    expiration_height: expiration_heights.get(&outpoint).cloned().flatten(),
-                },
-            );
-        }
+                    UtxoLock {
+                        outpoint,
+                        is_locked,
+                    },
+                )
+            })
+            .collect();
 
         let stage = ChangeSet::default();
 
@@ -2414,29 +2412,22 @@ impl Wallet {
             .map(|output| output.outpoint)
     }
 
-    /// Whether the `outpoint` is currently locked. See [`Wallet::lock_outpoint`] for more.
+    /// Whether the `outpoint` is locked. See [`Wallet::lock_outpoint`] for more.
     pub fn is_outpoint_locked(&self, outpoint: OutPoint) -> bool {
-        if let Some(utxo_lock) = self.locked_outpoints.get(&outpoint) {
-            if utxo_lock.is_locked {
-                return utxo_lock
-                    .expiration_height
-                    .map_or(true, |height| self.chain.tip().height() < height);
-            }
-        }
-        false
+        self.locked_outpoints
+            .get(&outpoint)
+            .map_or(false, |u| u.is_locked)
     }
 
     /// Lock a wallet output identified by the given `outpoint`.
     ///
     /// A locked UTXO will not be selected as an input to fund a transaction. This is useful
-    /// for excluding or reserving candidate inputs during transaction creation. You can optionally
-    /// specify the `expiration_height` of the lock that defines the height of the local chain at
-    /// which the outpoint becomes spendable.
+    /// for excluding or reserving candidate inputs during transaction creation.
     ///
-    /// You must persist the staged change for the lock status to be persistent. To unlock a
+    /// **You must persist the staged change for the lock status to be persistent**. To unlock a
     /// previously locked outpoint, see [`Wallet::unlock_outpoint`].
-    pub fn lock_outpoint(&mut self, outpoint: OutPoint, expiration_height: Option<u32>) {
-        use alloc::collections::btree_map;
+    pub fn lock_outpoint(&mut self, outpoint: OutPoint) {
+        use crate::collections::btree_map;
         let lock_value = true;
         let mut changeset = locked_outpoints::ChangeSet::default();
 
@@ -2449,36 +2440,26 @@ impl Wallet {
                     utxo.is_locked = lock_value;
                     changeset.locked_outpoints.insert(outpoint, lock_value);
                 }
-                if utxo.expiration_height != expiration_height {
-                    utxo.expiration_height = expiration_height;
-                    changeset
-                        .expiration_heights
-                        .insert(outpoint, expiration_height);
-                }
             }
             btree_map::Entry::Vacant(e) => {
                 e.insert(UtxoLock {
                     outpoint,
                     is_locked: lock_value,
-                    expiration_height,
                 });
                 changeset.locked_outpoints.insert(outpoint, lock_value);
-                changeset
-                    .expiration_heights
-                    .insert(outpoint, expiration_height);
             }
         };
 
-        self.stage.merge(ChangeSet {
-            locked_outpoints: changeset,
-            ..Default::default()
-        });
+        self.stage.merge(changeset.into());
     }
 
     /// Unlock the wallet output of the specified `outpoint`.
+    ///
+    /// **You must persist the staged changes.**
     pub fn unlock_outpoint(&mut self, outpoint: OutPoint) {
-        use alloc::collections::btree_map;
+        use crate::collections::btree_map;
         let lock_value = false;
+        let mut changeset = locked_outpoints::ChangeSet::default();
 
         match self.locked_outpoints.entry(outpoint) {
             btree_map::Entry::Vacant(..) => {}
@@ -2488,13 +2469,8 @@ impl Wallet {
                 let utxo = e.get_mut();
                 if utxo.is_locked {
                     utxo.is_locked = lock_value;
-                    self.stage.merge(ChangeSet {
-                        locked_outpoints: locked_outpoints::ChangeSet {
-                            locked_outpoints: [(outpoint, lock_value)].into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    });
+                    changeset.locked_outpoints.insert(outpoint, lock_value);
+                    self.stage.merge(changeset.into());
                 }
             }
         }
@@ -2703,22 +2679,18 @@ impl AsRef<bdk_chain::tx_graph::TxGraph<ConfirmationBlockTime>> for Wallet {
     }
 }
 
-/// Records the lock status of a wallet UTXO (outpoint).
+/// Records the lock status of a wallet UTXO.
 ///
-/// Only 1 [`UtxoLock`] may be applied to a particular outpoint at a time. Refer to the docs
+/// Only a single [`UtxoLock`] may be assigned to a particular outpoint at a time. Refer to the docs
 /// for [`Wallet::lock_outpoint`]. Note that the lock status is user-defined and does not take
-/// into account any timelocks directly encoded by the descriptor.
+/// into account any timelocks encoded by the descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub struct UtxoLock {
     /// Outpoint.
     pub outpoint: OutPoint,
-    /// Whether the outpoint is currently locked.
+    /// Whether the outpoint is locked.
     pub is_locked: bool,
-    /// Height at which the UTXO lock expires. The outpoint may be selected when the
-    /// wallet chain tip is at or above this height. If `None`, the lock remains in
-    /// effect unless explicitly unlocked.
-    pub expiration_height: Option<u32>,
 }
 
 /// Deterministically generate a unique name given the descriptors defining the wallet

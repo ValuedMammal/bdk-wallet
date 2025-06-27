@@ -194,8 +194,6 @@ impl ChangeSet {
             "CREATE TABLE {} ( \
                 txid TEXT NOT NULL, \
                 vout INTEGER NOT NULL, \
-                is_locked INTEGER, \
-                expiration_height INTEGER, \
                 PRIMARY KEY(txid, vout) \
                 ) STRICT;",
             Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
@@ -247,27 +245,20 @@ impl ChangeSet {
 
         // Select locked outpoints.
         let mut stmt = db_tx.prepare(&format!(
-            "SELECT txid, vout, is_locked, expiration_height FROM {}",
+            "SELECT txid, vout FROM {}",
             Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
         ))?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, Impl<Txid>>("txid")?,
                 row.get::<_, u32>("vout")?,
-                row.get::<_, bool>("is_locked")?,
-                row.get::<_, Option<u32>>("expiration_height")?,
             ))
         })?;
-        let locked_outpoints = &mut changeset.locked_outpoints;
+        let locked_outpoints = &mut changeset.locked_outpoints.locked_outpoints;
         for row in rows {
-            let (Impl(txid), vout, is_locked, expiration_height) = row?;
+            let (Impl(txid), vout) = row?;
             let outpoint = OutPoint::new(txid, vout);
-            locked_outpoints
-                .locked_outpoints
-                .insert(outpoint, is_locked);
-            locked_outpoints
-                .expiration_heights
-                .insert(outpoint, expiration_height);
+            locked_outpoints.insert(outpoint, true);
         }
 
         changeset.local_chain = local_chain::ChangeSet::from_sqlite(db_tx)?;
@@ -318,33 +309,29 @@ impl ChangeSet {
             })?;
         }
 
-        // Insert locked outpoints.
-        let mut stmt = db_tx.prepare_cached(&format!(
-            "INSERT INTO {}(txid, vout, is_locked) VALUES(:txid, :vout, :is_locked) ON CONFLICT DO UPDATE SET is_locked=:is_locked",
+        // Insert or delete locked outpoints.
+        let mut insert_stmt = db_tx.prepare_cached(&format!(
+            "REPLACE INTO {}(txid, vout) VALUES(:txid, :vout)",
+            Self::WALLET_OUTPOINT_LOCK_TABLE_NAME
+        ))?;
+        let mut delete_stmt = db_tx.prepare_cached(&format!(
+            "DELETE FROM {} WHERE txid=:txid AND vout=:vout",
             Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
         ))?;
         let locked_outpoints = &self.locked_outpoints.locked_outpoints;
-        for (&outpoint, is_locked) in locked_outpoints.iter() {
+        for (&outpoint, &is_locked) in locked_outpoints.iter() {
             let OutPoint { txid, vout } = outpoint;
-            stmt.execute(named_params! {
-                ":txid": Impl(txid),
-                ":vout": vout,
-                ":is_locked": is_locked,
-            })?;
-        }
-        // Insert locked outpoints expiration heights.
-        let mut stmt = db_tx.prepare_cached(&format!(
-            "INSERT INTO {}(txid, vout, expiration_height) VALUES(:txid, :vout, :expiration_height) ON CONFLICT DO UPDATE SET expiration_height=:expiration_height",
-            Self::WALLET_OUTPOINT_LOCK_TABLE_NAME,
-        ))?;
-        let expiration_heights = &self.locked_outpoints.expiration_heights;
-        for (&outpoint, expiration_height) in expiration_heights.iter() {
-            let OutPoint { txid, vout } = outpoint;
-            stmt.execute(named_params! {
-                ":txid": Impl(txid),
-                ":vout": vout,
-                ":expiration_height": expiration_height,
-            })?;
+            if is_locked {
+                insert_stmt.execute(named_params! {
+                    ":txid": Impl(txid),
+                    ":vout": vout,
+                })?;
+            } else {
+                delete_stmt.execute(named_params! {
+                    ":txid": Impl(txid),
+                    ":vout": vout,
+                })?;
+            }
         }
 
         self.local_chain.persist_to_sqlite(db_tx)?;
@@ -386,6 +373,15 @@ impl From<keychain_txout::ChangeSet> for ChangeSet {
     fn from(indexer: keychain_txout::ChangeSet) -> Self {
         Self {
             indexer,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<locked_outpoints::ChangeSet> for ChangeSet {
+    fn from(locked_outpoints: locked_outpoints::ChangeSet) -> Self {
+        Self {
+            locked_outpoints,
             ..Default::default()
         }
     }

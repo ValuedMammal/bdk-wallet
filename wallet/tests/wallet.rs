@@ -74,7 +74,7 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
     let unspent = wallet.list_unspent().collect::<Vec<_>>();
     assert!(!unspent.is_empty());
     for utxo in unspent {
-        wallet.lock_outpoint(utxo.outpoint, None);
+        wallet.lock_outpoint(utxo.outpoint);
         assert!(
             wallet.is_outpoint_locked(utxo.outpoint),
             "Expect outpoint is locked"
@@ -133,55 +133,6 @@ fn test_lock_outpoint_persist() -> anyhow::Result<()> {
         assert!(!wallet.locked_outpoints().values().any(|u| u.is_locked));
         assert!(wallet.list_locked_unspent().next().is_none());
         wallet.persist(&mut conn)?;
-
-        // Test: Update lock expiry
-        let outpoint = unspent.first().unwrap().outpoint;
-        let mut expiry: u32 = 100;
-        wallet.lock_outpoint(outpoint, Some(expiry));
-        let changeset = wallet.staged().unwrap();
-        assert_eq!(
-            changeset
-                .locked_outpoints
-                .expiration_heights
-                .get(&outpoint)
-                .cloned()
-                .unwrap(),
-            Some(expiry)
-        );
-
-        expiry *= 2;
-        wallet.lock_outpoint(outpoint, Some(expiry));
-        let changeset = wallet.staged().unwrap();
-        assert_eq!(
-            changeset
-                .locked_outpoints
-                .expiration_heights
-                .get(&outpoint)
-                .cloned()
-                .unwrap(),
-            Some(expiry)
-        );
-        wallet.persist(&mut conn)?;
-
-        // Now advance the local chain
-        let block_199 = BlockId {
-            height: expiry - 1,
-            hash: BlockHash::all_zeros(),
-        };
-        insert_checkpoint(&mut wallet, block_199);
-        assert!(
-            wallet.is_outpoint_locked(outpoint),
-            "outpoint should be locked before expiration height"
-        );
-        let block_200 = BlockId {
-            height: expiry,
-            hash: BlockHash::all_zeros(),
-        };
-        insert_checkpoint(&mut wallet, block_200);
-        assert!(
-            !wallet.is_outpoint_locked(outpoint),
-            "outpoint should unlock at expiration height"
-        );
     }
 
     Ok(())
